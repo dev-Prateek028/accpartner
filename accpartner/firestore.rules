@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isPartner(userId, pairUserId) {
+      return isAuthenticated() && (request.auth.uid == userId || request.auth.uid == pairUserId);
+    }
+    
+    function isValidTimezone(timezone) {
+      return timezone.matches('^[A-Za-z]+/[A-Za-z_]+$');
+    }
+    
+    function isValidDeadline(deadline) {
+      return deadline.matches('^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$');
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isOwner(userId) && 
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['username', 'timezone', 'deadline', 'rating', 'totalPairs']);
+      allow delete: if false; // Prevent user deletion
+    }
+
+    // Pairings collection
+    match /pairings/{pairingId} {
+      allow read: if isAuthenticated() && 
+        (request.auth.uid == resource.data.user1 || request.auth.uid == resource.data.user2);
+      allow create: if isAuthenticated() && 
+        request.resource.data.user1 == request.auth.uid &&
+        request.resource.data.user2 != request.auth.uid;
+      allow update: if false; // Pairings should not be updated
+      allow delete: if false; // Pairings should not be deleted
+    }
+
+    // Tasks collection
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated() && 
+        (request.auth.uid == resource.data.userId || request.auth.uid == resource.data.pairUserId);
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.userId &&
+        request.resource.data.pairUserId != request.auth.uid &&
+        isValidDeadline(request.resource.data.deadline);
+      allow update: if isAuthenticated() && 
+        (request.auth.uid == resource.data.userId || request.auth.uid == resource.data.pairUserId) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['verified', 'verificationResult', 'verifiedAt']);
+      allow delete: if false; // Tasks should not be deleted
+    }
+
+    // Verifications collection
+    match /verifications/{verificationId} {
+      allow read: if isAuthenticated() && 
+        (request.auth.uid == resource.data.fromUser || request.auth.uid == resource.data.toUser);
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.fromUser &&
+        request.resource.data.toUser != request.auth.uid;
+      allow update, delete: if false; // Verifications should not be modified
+    }
+  }
+}
